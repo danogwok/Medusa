@@ -193,7 +193,7 @@ MEDUSA.addShows.newShow = function() {
         }
     });
 
-    $('#rootDirText').change(updateSampleText);
+    $(document.body).on('change', '#rootDirText', updateSampleText);
     $('#searchResults').on('change', '#whichSeries', updateSampleText);
 
     $('#nameToSearch').keyup(event => {
