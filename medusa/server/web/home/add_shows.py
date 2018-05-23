@@ -50,10 +50,6 @@ class HomeAddShows(Home):
         return json.dumps({'results': result})
 
     @staticmethod
-    def sanitizeFileName(name):
-        return sanitize_filename(name)
-
-    @staticmethod
     def searchIndexersForShowName(search_term, lang=None, indexer=None):
         if not lang or lang == 'null':
             lang = app.INDEXER_DEFAULT_LANGUAGE

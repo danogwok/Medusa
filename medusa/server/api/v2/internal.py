@@ -7,7 +7,7 @@ import os
 import re
 
 from medusa import app, db
-from medusa.helper.common import try_int
+from medusa.helper.common import sanitize_filename, try_int
 from medusa.logger.adapters.style import BraceAdapter
 from medusa.server.api.v2.base import BaseRequestHandler
 from medusa.tv.series import Series, SeriesIdentifier
@@ -137,3 +137,16 @@ class InternalHandler(BaseRequestHandler):
                 dir_list.append(cur_dir)
 
         return self._ok(data=dir_list)
+
+    # sanitizeFileName
+    def resource_sanitize_file_name(self):
+        """Remove specific characters from the provided `name`."""
+        name = self.get_argument('name', '')
+
+        if not name:
+            return self._bad_request('No name provided')
+
+        result = {
+            'sanitized': sanitize_filename(name)
+        }
+        return self._ok(data=result)
