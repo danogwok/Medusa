@@ -929,7 +929,7 @@ table.search-results {
 table.search-results th,
 table.search-results td {
     border: 1px solid rgb(223, 222, 222);
-    padding: 5px 5px;
+    padding: 5px;
     vertical-align: middle;
     text-align: left;
     max-width: 370px;

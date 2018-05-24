@@ -25,52 +25,89 @@ const startVue = () => {
         data() {
             return {
                 // @TODO: Fix Python conversions
-                mounted: false,
                 formwizard: null,
                 skipShow: '',
                 otherShows: ${json.dumps(other_shows)},
 
                 // Show Search
-                indexerTimeout: ${app.INDEXER_TIMEOUT},
-                searchRequestXhr: null,
+                searchRequest: null,
                 searchStatus: '',
-                searchResults: {},
-                <% valid_indexers = { str(i): { 'name': v['name'], 'showUrl': v['show_url'], 'icon': v['icon'] } for i, v in iteritems(indexerConfig) } %>
+                firstSearch: false,
+                searchResults: [],
+                <%
+                    valid_indexers = {
+                        '0': {
+                            'name': 'All Indexers'
+                        }
+                    }
+                    valid_indexers.update({
+                        str(i): {
+                            'name': v['name'],
+                            'showUrl': v['show_url'],
+                            'icon': v['icon'],
+                            'identifier': v['identifier']
+                        }
+                        for i, v in iteritems(indexerConfig)
+                    })
+                %>
                 indexers: ${json.dumps(valid_indexers)},
+                indexerTimeout: ${app.INDEXER_TIMEOUT},
                 validLanguages: ${json.dumps(indexerApi().config['valid_languages'])},
-                nameToSearch: '${default_show_name}',
+                nameToSearch: ${json.dumps(default_show_name)},
                 indexerId: ${provided_indexer or 0},
-                indexerLanguage: '${app.INDEXER_DEFAULT_LANGUAGE}',
+                indexerLanguage: ${json.dumps(app.INDEXER_DEFAULT_LANGUAGE)},
 
                 // Provided info
                 providedInfo: {
                     use: ${json.dumps(use_provided_info)},
-                    indexer: ${json.dumps(provided_indexer_name)},
-                    indexerId: ${provided_indexer},
                     seriesId: ${provided_indexer_id},
+                    seriesName: ${json.dumps(provided_indexer_name)},
                     seriesDir: ${json.dumps(provided_show_dir)},
+                    indexerId: ${provided_indexer},
+                    indexerLanguage: 'en',
+
+                    ## use: true,
+                    ## seriesId: 1234,
+                    ## seriesName: 'Show Name',
+                    ## seriesDir: 'C:\\TV\\Show Name',
                 },
 
                 sanitizedNameCache: {},
 
                 selectedRootDir: '',
-                whichSeries: '',
+                whichSeries: ''
             };
         },
         mounted() {
-            this.mounted = true;
+            const init = () => {
+                this.$watch('formwizard.currentsection', newValue => {
+                    if (newValue === 0 && this.$refs.nameToSearch) {
+                        this.$refs.nameToSearch.focus();
+                    }
+                });
 
-            if (this.$refs.nameToSearch) {
-                this.$refs.nameToSearch.focus();
-
-                if (this.nameToSearch.length !== 0) {
-                    this.searchIndexers();
+                this.updateBlackWhiteList();
+                const { providedInfo } = this;
+                const { use, seriesId, seriesDir } = providedInfo;
+                if (use && seriesId !== 0 && seriesDir.length !== 0) {
+                    goToStep(3);
                 }
-            }
+
+                setTimeout(() => {
+                    if (this.$refs.nameToSearch) {
+                        this.$refs.nameToSearch.focus();
+
+                        if (this.nameToSearch.length !== 0) {
+                            this.searchIndexers();
+                        }
+                    }
+                }, this.formwizard.setting.revealfx[1]);
+            };
 
             /* JQuery Form to Form Wizard- (c) Dynamic Drive (www.dynamicdrive.com)
             *  This notice MUST stay intact for legal use
             *  Visit http://www.dynamicdrive.com/ for this script and 100s more. */
+            // @TODO: we need to move to real forms instead of this
 
             const goToStep = num => {
                 $('.step').each((idx, step) => {
@@ -80,17 +117,10 @@ const startVue = () => {
                 });
             }
 
-            // @TODO: we need to move to real forms instead of this
-            const vm = this;
             this.formwizard = new formtowizard({ // eslint-disable-line new-cap, no-undef
                 formid: 'addShowForm',
-                revealfx: ['slide', 500],
-                oninit() {
-                    vm.updateBlackWhiteList();
-                    if ($('input:hidden[name=whichSeries]').length !== 0 && $('#fullShowPath').length !== 0) {
-                        goToStep(3);
-                    }
-                }
+                revealfx: ['slide', 300],
+                oninit: init
             });
 
             $(document.body).on('change', 'select[name="quality_preset"]', () => {
@@ -103,69 +133,55 @@ const startVue = () => {
             });
         },
         computed: {
-            addButtonDisabled() {
-                // Currently requires jQuery
-                if ($ === undefined || !this.mounted) return true;
-
-                const { whichSeries, selectedRootDir } = this;
-                const hiddenWhichSeries = 'input:hidden[name=whichSeries]';
-                // @TODO: Simplify
-                const isEnabled = (
-                    // Root Dir selected or provided
-                    (selectedRootDir.length !== 0 ||
-                    ($('#fullShowPath').length !== 0 && $('#fullShowPath').val().length !== 0)) && // eslint-disable-line no-mixed-operators
-                    // Series selected or provided
-                    whichSeries.length !== 0 || // eslint-disable-line no-mixed-operators
-                    ($(hiddenWhichSeries).length !== 0 && $(hiddenWhichSeries).val().length !== 0)
-                )
-                return !isEnabled;
+            selectedSeries() {
+                const { searchResults, whichSeries } = this;
+                if (searchResults.length === 0) return null;
+                return searchResults.find(s => s.identifier === whichSeries);
             },
             showName() {
-                const { whichSeries } = this;
-
-                // Currently requires jQuery
-                if ($ === undefined || !this.mounted) return;
-
+                const { whichSeries, providedInfo, selectedSeries } = this;
+                // If we provided a show, use that
+                if (providedInfo.use && providedInfo.seriesName.length !== 0) return providedInfo.seriesName;
                 // If they've picked a radio button then use that
-                if (whichSeries.length !== 0) {
-                    return whichSeries.split('|')[2];
-                // If we provided a show in the hidden field, use that
-                } else if ($('input:hidden[name=whichSeries]').length !== 0 && $('input:hidden[name=whichSeries]').val().length !== 0) {
-                    return $('#providedName').val();
-                } else {
-                    return '';
-                }
+                if (selectedSeries !== null) return selectedSeries.seriesName;
+                // Not selected / not searched
+                return '';
             },
+            addButtonDisabled() {
+                const { whichSeries, selectedRootDir, providedInfo } = this;
+                if (providedInfo.use) return providedInfo.seriesDir.length === 0 || providedInfo.seriesId === 0;
+                return selectedRootDir.length === 0 || whichSeries === '';
+            },
+            spinnerSrc() {
+                const themeSpinner = MEDUSA.config.themeSpinner;
+                if (themeSpinner === undefined) return '';
+                return 'images/loading32' + themeSpinner + '.gif';
+            }
         },
         asyncComputed: {
             async showPath() {
-                const { whichSeries, selectedRootDir } = this;
-                const { showName } = this;
-
-                // Currently requires jQuery
-                if ($ === undefined || !this.mounted) return;
+                const { selectedRootDir, showName, providedInfo } = this;
 
                 let showPath;
-                let sepChar;
+                // If we provided a show path, use that
+                if (providedInfo.use && providedInfo.seriesDir.length !== 0) {
+                    showPath = providedInfo.seriesDir;
                 // If we have a root dir selected, figure out the path
-                if (selectedRootDir.length !== 0) {
-                    let rootDirectoryText = selectedRootDir;
-                    if (rootDirectoryText.indexOf('/') >= 0) {
-                        sepChar = '/';
-                    } else if (rootDirectoryText.indexOf('\\') >= 0) {
+                } else if (selectedRootDir.length !== 0) {
+                    let sepChar;
+                    if (selectedRootDir.indexOf('\\') > -1) {
                         sepChar = '\\';
+                    } else if (selectedRootDir.indexOf('/') > -1) {
+                        sepChar = '/';
                     } else {
                         sepChar = '';
                     }
 
-                    if (rootDirectoryText.substr(rootDirectoryText.length - 1) !== sepChar) {
-                        rootDirectoryText += sepChar;
+                    showPath = selectedRootDir;
+                    if (showPath.slice(-1) !== sepChar) {
+                        showPath += sepChar;
                     }
-                    rootDirectoryText += '<i>||</i>' + sepChar;
-
-                    showPath = rootDirectoryText;
-                } else if ($('#fullShowPath').length !== 0 && $('#fullShowPath').val().length !== 0) {
-                    showPath = $('#fullShowPath').val();
+                    showPath += '<i>||</i>' + sepChar;
                 } else {
                     return 'unknown dir';
                 }
@@ -189,6 +205,7 @@ const startVue = () => {
             }
         },
         methods: {
+            vueSubmitForm,
             submitForm() {
                 // If they haven't picked a show or a root dir don't let them submit
                 if (this.addButtonDisabled) {
@@ -196,35 +213,103 @@ const startVue = () => {
                     return;
                 }
                 generateBlackWhiteList(); // eslint-disable-line no-undef
-                return window.vueSubmitForm('addShowForm');
+                return this.$nextTick(() => this.vueSubmitForm('addShowForm'));
             },
             submitFormSkip() {
                 this.skipShow = '1';
-                return window.vueSubmitForm('addShowForm');
+                return this.$nextTick(() => this.vueSubmitForm('addShowForm'));
             },
             rootDirsUpdated(rootDirs) {
                 this.selectedRootDir = rootDirs.length === 0 ? '' : rootDirs.find(rd => rd.selected).path;
             },
-            searchIndexers() {
-                let { nameToSearch, providedInfo, indexerTimeout, indexerLanguage, indexerId } = this;
+            async searchIndexers() {
+                let { nameToSearch, indexerLanguage, indexerId, indexerTimeout, indexers } = this;
 
-                if (nameToSearch.length === 0) {
-                    return;
-                }
+                if (nameToSearch.length === 0) return;
 
-                if (this.searchRequestXhr) {
-                    this.searchRequestXhr.abort();
+                if (this.searchRequest) {
+                    this.searchRequest.abort();
                 }
 
                 this.whichSeries = '';
-                this.searchResults = {};
+                this.searchResults = [];
 
-                const searchingFor = '<b>' + nameToSearch + '</b> on ' + $('#providedIndexer option:selected').text() + ' in ' + indexerLanguage;
-                this.searchStatus = '<img id="searchingAnim" src="images/loading32' + MEDUSA.config.themeSpinner + '.gif" height="32" width="32" /> searching ' + searchingFor + '...';
+                // Get the language name
+                const indexerLanguageSelect = this.$refs.indexerLanguage.$el;
+                const indexerLanguageName = indexerLanguageSelect[indexerLanguageSelect.selectedIndex].text;
+
+                const searchingFor = '<b>' + nameToSearch + '</b> on ' + indexers[indexerId].name + ' in ' + indexerLanguageName;
+                this.searchStatus = 'Searching ' + searchingFor + '...';
 
                 this.$nextTick(() => this.formwizard.loadsection(0)); // eslint-disable-line no-use-before-define
 
-                this.searchRequestXhr = $.ajax({
+                const options = {
+                    body: {
+                        search_term: nameToSearch, // eslint-disable-line camelcase
+                        lang: indexerLanguage,
+                        indexer: indexerId
+                    },
+                    // timeout: indexerTimeout * 1000
+                };
+                const response = await this.$http.get('addShows/searchIndexersForShowName', options);
+                if (response.ok === false) {
+                    this.searchStatus = 'Search timed out, try again or try another indexer';
+                    return;
+                }
+                data = JSON.parse(response.body);
+
+                this.searchStatus = '';
+
+                const languageId = data.langid;
+                this.searchResults = data.results
+                    .map(result => {
+                        // Compute whichSeries value
+                        // whichSeries = result.join('|')
+
+                        // Unpack result items 0 through 6 (Array)
+                        let [ indexerName, indexerId, indexerShowUrl, seriesId, seriesName, premiereDate, network ] = result;
+
+                        identifier = [indexers[indexerId].identifier, seriesId].join('')
+
+                        // Append seriesId to indexer show url
+                        indexerShowUrl += seriesId;
+                        // For now only add the languageId id to the tvdb url, as the others might have different routes.
+                        if (languageId && languageId !== '' && indexerId === 1) {
+                            indexerShowUrl += '&lid=' + languageId
+                        }
+
+                        // Discard 'N/A' and '1900-01-01'
+                        const filter = string => ['N/A', '1900-01-01'].includes(string) ? '' : string;
+                        premiereDate = filter(premiereDate);
+                        network = filter(network);
+
+                        indexerIcon = 'images/' + indexers[indexerId].icon;
+
+                        return {
+                            identifier,
+                            // whichSeries,
+                            indexerName,
+                            indexerId,
+                            indexerShowUrl,
+                            indexerIcon,
+                            seriesId,
+                            seriesName,
+                            premiereDate,
+                            network
+                        };
+                    });
+
+                if (this.searchResults.length !== 0) {
+                    // Select the first result
+                    this.whichSeries = this.searchResults[0].identifier;
+                }
+
+                this.firstSearch = true;
+
+                this.$nextTick(() => {
+                    this.formwizard.loadsection(0); // eslint-disable-line no-use-before-define
+                });
+                /*this.searchRequest = $.ajax({
                     url: 'addShows/searchIndexersForShowName',
                     data: {
                         search_term: nameToSearch, // eslint-disable-line camelcase
@@ -234,89 +319,15 @@ const startVue = () => {
                     timeout: indexerTimeout * 1000,
                     dataType: 'json',
                     error() {
-                        this.searchStatus = 'search timed out, try again or try another indexer';
+                        this.searchStatus = 'Search timed out, try again or try another indexer';
                     }
                 }).done(data => {
-                    this.searchStatus = '';
-
-                    const language = data.langid;
-                    const results = data.results
-                        .map(result => {
-                            // Unpack result items 0 through 6 (Array)
-                            let [ indexerName, indexerId, indexerShowUrl, seriesId, seriesName, premiereDate, network ] = result;
-
-                            // Compute whichSeries value:
-                            // FIXME: Do we still need this value replace? .replace(/"/g, '')
-                            whichSeries = [indexerId, seriesId, seriesName].join('|')
-
-                            // Append seriesId to indexer show url
-                            indexerShowUrl += seriesId;
-                            // For now only add the language id to the tvdb url, as the others might have different routes.
-                            if (language && language !== '' && indexerId === 1) {
-                                indexerShowUrl += '&lid=' + language
-                            }
-
-                            // Discard 'N/A' and '1900-01-01'
-                            /*
-                            const filter = string => ['N/A', '1900-01-01'].includes(string) ? '' : string;
-                            premiereDate = filter(premiereDate);
-                            network = filter(network);
-                            */
-
-                            indexerIcon = 'images/' + this.indexerNameToConfig(indexerName).icon;
-
-                            return {
-                                whichSeries,
-                                indexerName,
-                                indexerId,
-                                indexerShowUrl,
-                                indexerIcon,
-                                seriesId,
-                                seriesName,
-                                premiereDate,
-                                network
-                            };
-                        });
-
-                    this.searchResults = {
-                        language,
-                        results
-                    };
-
-                    if (results.length !== 0) {
-                        // Select the first result
-                        this.whichSeries = results[0].whichSeries;
-                    }
-
-                    this.$nextTick(() => {
-                        this.formwizard.loadsection(0); // eslint-disable-line no-use-before-define
-                    });
-                });
+                });*/
             },
-            <%doc>
-            // OLD STYLE
-            debutText(result) {
-                if (result.premiereDate === null) return '';
-                const startDate = new Date(result.premiereDate);
-                const today = new Date();
-                const prefix = startDate > today ? 'will debut' : 'started';
-                return ' (' + prefix + ' on ' + result.premiereDate + ' on ' + result.network + ')';
-            },
-            </%doc>
             updateBlackWhiteList() {
                 // Currently requires jQuery
-                if ($ === undefined || !this.mounted) return;
+                if ($ === undefined) return;
                 $.updateBlackWhiteList(this.showName);
-            },
-            indexerNameToConfig(name) {
-                const { indexers } = this;
-                const indexerId = Object.keys(indexers)
-                    .find(id => indexers[id].name.toLowerCase() === name.toLowerCase());
-
-                if (indexerId === undefined)
-                    return {};
-
-                return indexers[indexerId];
             }
         }
     });
@@ -336,34 +347,39 @@ const startVue = () => {
                 <fieldset class="sectionwrap">
                     <legend class="legendStep">Find a show on selected indexer(s)</legend>
                     <div v-if="providedInfo.use" class="stepDiv">
-                        Show retrieved from existing metadata: <app-link :href="indexers[providedInfo.indexerId].showUrl + providedInfo.seriesId">{{ providedInfo.indexer }}</app-link>
-                        <input type="hidden" id="indexer_lang" name="indexer_lang" value="en" />
-                        <input type="hidden" id="whichSeries" name="whichSeries" :value="providedInfo.seriesId" />
-                        <input type="hidden" id="providedIndexer" name="providedIndexer" :value="providedInfo.indexerId" />
-                        <input type="hidden" id="providedName" :value="providedInfo.indexer" />
+                        Show retrieved from existing metadata:
+                        <app-link :href="indexers[providedInfo.indexerId].showUrl + providedInfo.seriesId">
+                            <b>{{ providedInfo.seriesName }}</b>
+                        </app-link>
+                        <input type="hidden" name="indexer_lang" :value="providedInfo.indexerLanguage" />
+                        <input type="hidden" name="whichSeries" :value="providedInfo.seriesId" />
+                        <input type="hidden" name="providedIndexer" :value="providedInfo.indexerId" />
+                        <input type="hidden" :value="providedInfo.seriesName" />
                     </div>
                     <div v-else class="stepDiv">
                         <input type="text" v-model.trim="nameToSearch" ref="nameToSearch" @keyup.enter="searchIndexers" class="form-control form-control-inline input-sm input350"/>
                         &nbsp;&nbsp;
-                        <language-select @update-language="indexerLanguage = $event" name="indexer_lang" id="indexerLangSelect" :language="indexerLanguage" :available="validLanguages.join(',')" class="form-control form-control-inline input-sm"></language-select>
+                        <language-select @update-language="indexerLanguage = $event" ref="indexerLanguage" name="indexer_lang" :language="indexerLanguage" :available="validLanguages.join(',')" class="form-control form-control-inline input-sm"></language-select>
                         <b>*</b>
                         &nbsp;
-                        <select name="providedIndexer" id="providedIndexer" v-model="indexerId" class="form-control form-control-inline input-sm">
-                            <option :value.number="0">All Indexers</option>
-                            <option v-for="(indexer, indexerId) in indexers" :value.number="indexerId">{{indexer.name}}</option>
+                        <select name="providedIndexer" v-model.number="indexerId" class="form-control form-control-inline input-sm">
+                            <option v-for="(indexer, indexerId) in indexers" :value="indexerId">{{indexer.name}}</option>
                         </select>
                         &nbsp;
-                        <input class="btn-medusa btn-inline" type="button" id="searchName" value="Search" @click="searchIndexers" />
+                        <input class="btn-medusa btn-inline" type="button" value="Search" @click="searchIndexers" />
 
                         <p style="padding: 20px 0;">
                             <b>*</b> This will only affect the language of the retrieved metadata file contents and episode filenames.<br />
                             This <b>DOES NOT</b> allow Medusa to download non-english TV episodes!
                         </p>
 
-                        <div v-if="searchResults.results === undefined" v-html="searchStatus"></div>
+                        <div v-if="!firstSearch || searchStatus !== ''">
+                            <img v-if="searchStatus.startsWith('Searching')" :src="spinnerSrc" height="32" width="32" />
+                            <span v-html="searchStatus"></span>
+                        </div>
                         <div v-else class="search-results">
                             <legend class="legendStep">Search Results:</legend>
-                            <table v-if="searchResults.results.length !== 0" class="search-results">
+                            <table v-if="searchResults.length !== 0" class="search-results">
                                 <thead>
                                     <tr>
                                         <th></th>
@@ -374,19 +390,17 @@ const startVue = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="result in searchResults.results" @click="whichSeries = result.whichSeries" :class="whichSeries === result.whichSeries ? 'selected' : ''">
+                                    <tr v-for="result in searchResults" @click="whichSeries = result.identifier" :class="{ selected: whichSeries === result.identifier }">
                                         <td style="text-align: center; vertical-align: middle;">
-                                            <input v-model="whichSeries" type="radio" :value="result.whichSeries" id="whichSeries" name="whichSeries" />
+                                            <input v-model="whichSeries" type="radio" :value="result.identifier" name="whichSeries" />
                                         </td>
                                         <td>
                                             <app-link :href="result.indexerShowUrl" title="Go to the show's page on the indexer site">
                                                 <b>{{ result.seriesName }}</b>
                                             </app-link>
                                         </td>
-                                        ## <td class="premiere">{{ result.premiereDate }}</td>
-                                        ## <td class="network">{{ result.network }}</td>
-                                        <td class="premiere">{{ !['N/A', '1900-01-01'].includes(result.premiereDate) ? result.premiereDate : '' }}</td>
-                                        <td class="network">{{ result.network !== 'N/A' ? result.network : '' }}</td>
+                                        <td class="premiere">{{ result.premiereDate }}</td>
+                                        <td class="network">{{ result.network }}</td>
                                         <td class="indexer">
                                             {{ result.indexerName }}
                                             <img height="16" width="16" :src="result.indexerIcon" />
@@ -398,33 +412,13 @@ const startVue = () => {
                                 <b>No results found, try a different search.</b>
                             </div>
                         </div>
-
-                        <%doc>
-                        ## OLD STYLE
-                        <div id="searchResults" style="height: 100%;">
-                            <div v-if="searchResults.results === undefined" class="search-status" v-html="searchStatus"></div>
-                            <fieldset v-else>
-                                <legend class="legendStep">Search Results:</legend>
-                                <b v-if="searchResults.results.length === 0">No results found, try a different search.</b>
-                                <div v-else v-for="result in searchResults.results">
-                                    <input v-model="whichSeries" type="radio" :value="result.whichSeries" id="whichSeries" name="whichSeries" style="vertical-align: -2px;" />
-                                    <app-link :href="result.indexerShowUrl">
-                                        <b>{{ result.seriesName }}</b>
-                                    </app-link>
-
-                                    <span v-if="result.premiereDate !== null" v-html="debutText(result)"></span>
-                                    <span v-if="result.indexerName !== null"> [{{result.indexerName}}]</span>
-                                </div>
-                            </fieldset>
-                        </div>
-                        </%doc>
                     </div>
                 </fieldset>
                 <fieldset class="sectionwrap">
                     <legend class="legendStep">Pick the parent folder</legend>
-                    <div v-if="providedInfo.seriesDir" class="stepDiv">
+                    <div v-if="providedInfo.use && providedInfo.seriesDir.length !== 0" class="stepDiv">
                         Pre-chosen Destination Folder: <b>{{providedInfo.seriesDir}}</b> <br>
-                        <input type="hidden" id="fullShowPath" name="fullShowPath" :value="providedInfo.seriesDir" /><br>
+                        <input type="hidden" name="fullShowPath" :value="providedInfo.seriesDir" /><br>
                     </div>
                     <div v-else class="stepDiv">
                         <root-dirs @update:root-dirs="rootDirsUpdated"></root-dirs>
@@ -437,14 +431,14 @@ const startVue = () => {
                     </div>
                 </fieldset>
 
-                <input v-for="curNextDir in otherShows" type="hidden" name="other_shows" :value="curNextDir" />
+                <input v-for="nextShow in otherShows" type="hidden" name="other_shows" :value="nextShow" />
 
-                <input type="hidden" name="skipShow" id="skipShow" :value="skipShow" />
+                <input type="hidden" name="skipShow" :value="skipShow" />
             </form>
             <br>
             <div style="width: 100%; text-align: center;">
-                <input @click.prevent="submitForm" id="addShowButton" class="btn-medusa" type="button" value="Add Show" :disabled="addButtonDisabled" />
-                <input v-if="providedInfo.seriesDir" @click.prevent="submitFormSkip" class="btn-medusa" type="button" id="skipShowButton" value="Skip Show" />
+                <input @click.prevent="submitForm" class="btn-medusa" type="button" value="Add Show" :disabled="addButtonDisabled" />
+                <input v-if="providedInfo.use && providedInfo.seriesDir.length !== 0" @click.prevent="submitFormSkip" class="btn-medusa" type="button" value="Skip Show" />
             </div>
         </div>
     </div>
