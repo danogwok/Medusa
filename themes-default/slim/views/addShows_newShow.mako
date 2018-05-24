@@ -128,7 +128,7 @@ const startVue = () => {
 
                 // If they've picked a radio button then use that
                 if (whichSeries.length !== 0) {
-                    return whichSeries.split('|')[2];
+                    return whichSeries.split('|')[4];
                 // If we provided a show in the hidden field, use that
                 } else if ($('input:hidden[name=whichSeries]').length !== 0 && $('input:hidden[name=whichSeries]').val().length !== 0) {
                     return $('#providedName').val();
@@ -189,6 +189,7 @@ const startVue = () => {
             }
         },
         methods: {
+            vueSubmitForm,
             submitForm() {
                 // If they haven't picked a show or a root dir don't let them submit
                 if (this.addButtonDisabled) {
@@ -196,11 +197,11 @@ const startVue = () => {
                     return;
                 }
                 generateBlackWhiteList(); // eslint-disable-line no-undef
-                return window.vueSubmitForm('addShowForm');
+                return this.vueSubmitForm('addShowForm');
             },
             submitFormSkip() {
                 this.skipShow = '1';
-                return window.vueSubmitForm('addShowForm');
+                return this.vueSubmitForm('addShowForm');
             },
             rootDirsUpdated(rootDirs) {
                 this.selectedRootDir = rootDirs.length === 0 ? '' : rootDirs.find(rd => rd.selected).path;
@@ -247,7 +248,7 @@ const startVue = () => {
 
                             // Compute whichSeries value:
                             // FIXME: Do we still need this value replace? .replace(/"/g, '')
-                            whichSeries = [indexerId, seriesId, seriesName].join('|')
+                            whichSeries = result.join('|')
 
                             // Append seriesId to indexer show url
                             indexerShowUrl += seriesId;
@@ -374,7 +375,7 @@ const startVue = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="result in searchResults.results" @click="whichSeries = result.whichSeries" :class="whichSeries === result.whichSeries ? 'selected' : ''">
+                                    <tr v-for="result in searchResults.results" @click="whichSeries = result.whichSeries" :class="{ selected: whichSeries === result.whichSeries }">
                                         <td style="text-align: center; vertical-align: middle;">
                                             <input v-model="whichSeries" type="radio" :value="result.whichSeries" id="whichSeries" name="whichSeries" />
                                         </td>
