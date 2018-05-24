@@ -25,42 +25,30 @@ const startVue = () => {
         data() {
             return {
                 // @TODO: Fix Python conversions
-                header: 'New Show',
                 mounted: false,
-
-                useFormtowizard: true,
-                myform: null, // Formwizard
+                formwizard: null,
                 skipShow: '',
                 otherShows: ${json.dumps(other_shows)},
 
                 // Show Search
                 indexerTimeout: ${app.INDEXER_TIMEOUT},
                 searchRequestXhr: null,
-                searchRequestText: '<br />',
-                searchResults: [],
-                <% valid_indexers = { str(i): { 'name': v['name'], 'showUrl': v['show_url'] } for i, v in iteritems(indexerConfig) } %>
+                searchStatus: '',
+                searchResults: {},
+                <% valid_indexers = { str(i): { 'name': v['name'], 'showUrl': v['show_url'], 'icon': v['icon'] } for i, v in iteritems(indexerConfig) } %>
                 indexers: ${json.dumps(valid_indexers)},
                 validLanguages: ${json.dumps(indexerApi().config['valid_languages'])},
                 nameToSearch: '${default_show_name}',
                 indexerId: ${provided_indexer or 0},
-                language: '${app.INDEXER_DEFAULT_LANGUAGE}',
+                indexerLanguage: '${app.INDEXER_DEFAULT_LANGUAGE}',
 
                 // Provided info
                 providedInfo: {
+                    use: ${json.dumps(use_provided_info)},
                     indexer: ${json.dumps(provided_indexer_name)},
                     indexerId: ${provided_indexer},
                     seriesId: ${provided_indexer_id},
                     seriesDir: ${json.dumps(provided_show_dir)},
-                },
-
-                searchTerm: '',
-                searchLang: {
-                    id: null,
-                    name: '',
-                },
-                searchIndexer: {
-                    id: null,
-                    name: '',
                 },
 
                 sanitizedNameCache: {},
@@ -92,32 +80,27 @@ const startVue = () => {
                 });
             }
 
-            const vm = this;
             // @TODO: we need to move to real forms instead of this
-            if (this.useFormtowizard) {
-                vm.myform = new formtowizard({ // eslint-disable-line new-cap, no-undef
-                    formid: 'addShowForm',
-                    revealfx: ['slide', 500],
-                    oninit() {
-                        vm.updateSampleText();
-                        if ($('input:hidden[name=whichSeries]').length !== 0 && $('#fullShowPath').length !== 0) {
-                            goToStep(3);
-                        }
+            const vm = this;
+            this.formwizard = new formtowizard({ // eslint-disable-line new-cap, no-undef
+                formid: 'addShowForm',
+                revealfx: ['slide', 500],
+                oninit() {
+                    vm.updateBlackWhiteList();
+                    if ($('input:hidden[name=whichSeries]').length !== 0 && $('#fullShowPath').length !== 0) {
+                        goToStep(3);
                     }
-                });
+                }
+            });
 
-                $(document.body).on('change', 'select[name="quality_preset"]', () => {
-                    setTimeout(() => vm.myform.loadsection(2), 100);
-                });
+            $(document.body).on('change', 'select[name="quality_preset"]', () => {
+                this.$nextTick(() => this.formwizard.loadsection(2));
+            });
 
-                $('#anime').change(() => {
-                    vm.updateSampleText();
-                    setTimeout(() => vm.myform.loadsection(2), 100);
-                });
-            }
-
-            this.$watch('selectedRootDir', this.updateSampleText);
-            this.$watch('whichSeries', this.updateSampleText);
+            $(document.body).on('change', '#anime', () => {
+                this.updateBlackWhiteList();
+                this.$nextTick(() => this.formwizard.loadsection(2));
+            });
         },
         computed: {
             addButtonDisabled() {
@@ -207,17 +190,12 @@ const startVue = () => {
         },
         methods: {
             submitForm() {
-                // @TODO: When switching to Vue - Don't forget about that generateBlackWhiteList...
-                /*
-                // If they haven't picked a show don't let them submit
-                if (!$('input:radio[name="whichSeries"]:checked').val() && $('input:hidden[name="whichSeries"]').val().length === 0) {
-                    alert('You must choose a show to continue'); // eslint-disable-line no-alert
-                    return false;
+                // If they haven't picked a show or a root dir don't let them submit
+                if (this.addButtonDisabled) {
+                    this.$snotify.warning('You must choose a show and a parent folder to continue.');
+                    return;
                 }
-                */
                 generateBlackWhiteList(); // eslint-disable-line no-undef
-                // The submit is handled by Vue
-                // $('#addShowForm').submit();
                 return window.vueSubmitForm('addShowForm');
             },
             submitFormSkip() {
@@ -228,66 +206,95 @@ const startVue = () => {
                 this.selectedRootDir = rootDirs.length === 0 ? '' : rootDirs.find(rd => rd.selected).path;
             },
             searchIndexers() {
-                let { searchRequestXhr, nameToSearch, providedInfo, indexerTimeout, language } = this;
+                let { nameToSearch, providedInfo, indexerTimeout, indexerLanguage, indexerId } = this;
 
                 if (nameToSearch.length === 0) {
                     return;
                 }
 
-                if (searchRequestXhr) {
-                    searchRequestXhr.abort();
+                if (this.searchRequestXhr) {
+                    this.searchRequestXhr.abort();
                 }
 
                 this.whichSeries = '';
+                this.searchResults = {};
 
-                const searchingFor = '<b>' + nameToSearch + '</b> on ' + $('#providedIndexer option:selected').text() + ' in ' + language;
-                this.searchRequestText = '<img id="searchingAnim" src="images/loading32' + MEDUSA.config.themeSpinner + '.gif" height="32" width="32" /> searching ' + searchingFor + '...';
+                const searchingFor = '<b>' + nameToSearch + '</b> on ' + $('#providedIndexer option:selected').text() + ' in ' + indexerLanguage;
+                this.searchStatus = '<img id="searchingAnim" src="images/loading32' + MEDUSA.config.themeSpinner + '.gif" height="32" width="32" /> searching ' + searchingFor + '...';
 
-                searchRequestXhr = $.ajax({
+                this.$nextTick(() => this.formwizard.loadsection(0)); // eslint-disable-line no-use-before-define
+
+                this.searchRequestXhr = $.ajax({
                     url: 'addShows/searchIndexersForShowName',
                     data: {
                         search_term: nameToSearch, // eslint-disable-line camelcase
-                        lang: language,
-                        indexer: providedInfo.indexerId
+                        lang: indexerLanguage,
+                        indexer: indexerId
                     },
                     timeout: indexerTimeout * 1000,
                     dataType: 'json',
                     error() {
-                        this.searchRequestText = 'search timed out, try again or try another indexer';
+                        this.searchStatus = 'search timed out, try again or try another indexer';
                     }
                 }).done(data => {
-                    this.searchRequestText = '';
+                    this.searchStatus = '';
 
+                    const language = data.langid;
                     const results = data.results
                         .map(result => {
+                            // Unpack result items 0 through 6 (Array)
+                            let [ indexerName, indexerId, indexerShowUrl, seriesId, seriesName, premiereDate, network ] = result;
+
+                            // Compute whichSeries value:
+                            // FIXME: Do we still need this value replace? .replace(/"/g, '')
+                            whichSeries = [indexerId, seriesId, seriesName].join('|')
+
+                            // Append seriesId to indexer show url
+                            indexerShowUrl += seriesId;
+                            // For now only add the language id to the tvdb url, as the others might have different routes.
+                            if (language && language !== '' && indexerId === 1) {
+                                indexerShowUrl += '&lid=' + language
+                            }
+
+                            // Discard 'N/A' and '1900-01-01'
+                            /*
+                            const filter = string => ['N/A', '1900-01-01'].includes(string) ? '' : string;
+                            premiereDate = filter(premiereDate);
+                            network = filter(network);
+                            */
+
+                            indexerIcon = 'images/' + this.indexerNameToConfig(indexerName).icon;
+
                             return {
-                                indexerName: result[0],
-                                indexerId: result[1],
-                                indexerShowUrl: result[2],
-                                seriesId: result[3],
-                                seriesName: result[4],
-                                premiereDate: result[5],
-                                network: result[6]
+                                whichSeries,
+                                indexerName,
+                                indexerId,
+                                indexerShowUrl,
+                                indexerIcon,
+                                seriesId,
+                                seriesName,
+                                premiereDate,
+                                network
                             };
                         });
 
                     this.searchResults = {
-                        language: data.langid,
+                        language,
                         results
                     };
 
                     if (results.length !== 0) {
                         // Select the first result
-                        this.whichSeries = [results[0].indexerId, results[0].seriesId, results[0].seriesName].join('|');
+                        this.whichSeries = results[0].whichSeries;
                     }
 
-                    if (this.useFormtowizard) {
-                        this.$nextTick(() => {
-                            this.myform.loadsection(0); // eslint-disable-line no-use-before-define
-                        });
-                    }
+                    this.$nextTick(() => {
+                        this.formwizard.loadsection(0); // eslint-disable-line no-use-before-define
+                    });
                 });
             },
+            <%doc>
+            // OLD STYLE
             debutText(result) {
                 if (result.premiereDate === null) return '';
                 const startDate = new Date(result.premiereDate);
@@ -295,10 +302,21 @@ const startVue = () => {
                 const prefix = startDate > today ? 'will debut' : 'started';
                 return ' (' + prefix + ' on ' + result.premiereDate + ' on ' + result.network + ')';
             },
-            updateSampleText() {
+            </%doc>
+            updateBlackWhiteList() {
                 // Currently requires jQuery
                 if ($ === undefined || !this.mounted) return;
                 $.updateBlackWhiteList(this.showName);
+            },
+            indexerNameToConfig(name) {
+                const { indexers } = this;
+                const indexerId = Object.keys(indexers)
+                    .find(id => indexers[id].name.toLowerCase() === name.toLowerCase());
+
+                if (indexerId === undefined)
+                    return {};
+
+                return indexers[indexerId];
             }
         }
     });
@@ -306,7 +324,8 @@ const startVue = () => {
 </script>
 </%block>
 <%block name="content">
-<h1 class="header">{{header}}</h1>
+<vue-snotify></vue-snotify>
+<h1 class="header">New Show</h1>
 <div class="newShowPortal">
     <div id="config-components">
         <ul><li><app-link href="#core-component-group1">Add New Show</app-link></li></ul>
@@ -316,105 +335,99 @@ const startVue = () => {
             <form id="addShowForm" method="post" action="addShows/addNewShow" redirect="/home" accept-charset="utf-8">
                 <fieldset class="sectionwrap">
                     <legend class="legendStep">Find a show on selected indexer(s)</legend>
-                    <div class="stepDiv">
-                        % if use_provided_info:
-                            Show retrieved from existing metadata: <app-link :href="indexers[providedInfo.indexerId].showUrl + providedInfo.seriesId">{{ providedInfo.indexer }}</app-link>
-                            <input type="hidden" id="indexer_lang" name="indexer_lang" value="en" />
-                            <input type="hidden" id="whichSeries" name="whichSeries" :value="providedInfo.seriesId" />
-                            <input type="hidden" id="providedIndexer" name="providedIndexer" :value="providedInfo.indexerId" />
-                            <input type="hidden" id="providedName" :value="providedInfo.indexer" />
-                        % else:
-                            <input type="text" v-model.trim="nameToSearch" ref="nameToSearch" @keyup.enter="searchIndexers" class="form-control form-control-inline input-sm input350"/>
-                            &nbsp;&nbsp;
-                            <language-select @update-language="language = $event" name="indexer_lang" id="indexerLangSelect" :language="language" :available="validLanguages.join(',')" class="form-control form-control-inline input-sm"></language-select>
-                            <b>*</b>
-                            &nbsp;
-                            <select name="providedIndexer" id="providedIndexer" v-model="indexerId" class="form-control form-control-inline input-sm">
-                                <option :value.number="0">All Indexers</option>
-                                <option v-for="(indexer, indexerId) in indexers" :value.number="indexerId">{{indexer.name}}</option>
-                            </select>
-                            &nbsp;
-                            <input class="btn-medusa btn-inline" type="button" id="searchName" value="Search" @click="searchIndexers" />
-                            <br><br>
-                            <b>*</b> This will only affect the language of the retrieved metadata file contents and episode filenames.<br>
-                            This <b>DOES NOT</b> allow Medusa to download non-english TV episodes!<br><br>
+                    <div v-if="providedInfo.use" class="stepDiv">
+                        Show retrieved from existing metadata: <app-link :href="indexers[providedInfo.indexerId].showUrl + providedInfo.seriesId">{{ providedInfo.indexer }}</app-link>
+                        <input type="hidden" id="indexer_lang" name="indexer_lang" value="en" />
+                        <input type="hidden" id="whichSeries" name="whichSeries" :value="providedInfo.seriesId" />
+                        <input type="hidden" id="providedIndexer" name="providedIndexer" :value="providedInfo.indexerId" />
+                        <input type="hidden" id="providedName" :value="providedInfo.indexer" />
+                    </div>
+                    <div v-else class="stepDiv">
+                        <input type="text" v-model.trim="nameToSearch" ref="nameToSearch" @keyup.enter="searchIndexers" class="form-control form-control-inline input-sm input350"/>
+                        &nbsp;&nbsp;
+                        <language-select @update-language="indexerLanguage = $event" name="indexer_lang" id="indexerLangSelect" :language="indexerLanguage" :available="validLanguages.join(',')" class="form-control form-control-inline input-sm"></language-select>
+                        <b>*</b>
+                        &nbsp;
+                        <select name="providedIndexer" id="providedIndexer" v-model="indexerId" class="form-control form-control-inline input-sm">
+                            <option :value.number="0">All Indexers</option>
+                            <option v-for="(indexer, indexerId) in indexers" :value.number="indexerId">{{indexer.name}}</option>
+                        </select>
+                        &nbsp;
+                        <input class="btn-medusa btn-inline" type="button" id="searchName" value="Search" @click="searchIndexers" />
 
-                            ## NEW STYLE - needs styling
-                            <div v-if="searchRequestText.length !== 0" v-html="searchRequestText"></div>
-                            <div v-else style="height: 100%;">
+                        <p style="padding: 20px 0;">
+                            <b>*</b> This will only affect the language of the retrieved metadata file contents and episode filenames.<br />
+                            This <b>DOES NOT</b> allow Medusa to download non-english TV episodes!
+                        </p>
+
+                        <div v-if="searchResults.results === undefined" v-html="searchStatus"></div>
+                        <div v-else class="search-results">
+                            <legend class="legendStep">Search Results:</legend>
+                            <table v-if="searchResults.results.length !== 0" class="search-results">
+                                <thead>
+                                    <tr>
+                                        <th></th>
+                                        <th>Show Name</th>
+                                        <th class="premiere">Premiere</th>
+                                        <th class="network">Network</th>
+                                        <th class="indexer">Indexer</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="result in searchResults.results" @click="whichSeries = result.whichSeries" :class="whichSeries === result.whichSeries ? 'selected' : ''">
+                                        <td style="text-align: center; vertical-align: middle;">
+                                            <input v-model="whichSeries" type="radio" :value="result.whichSeries" id="whichSeries" name="whichSeries" />
+                                        </td>
+                                        <td>
+                                            <app-link :href="result.indexerShowUrl" title="Go to the show's page on the indexer site">
+                                                <b>{{ result.seriesName }}</b>
+                                            </app-link>
+                                        </td>
+                                        ## <td class="premiere">{{ result.premiereDate }}</td>
+                                        ## <td class="network">{{ result.network }}</td>
+                                        <td class="premiere">{{ !['N/A', '1900-01-01'].includes(result.premiereDate) ? result.premiereDate : '' }}</td>
+                                        <td class="network">{{ result.network !== 'N/A' ? result.network : '' }}</td>
+                                        <td class="indexer">
+                                            {{ result.indexerName }}
+                                            <img height="16" width="16" :src="result.indexerIcon" />
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div v-else class="no-results">
+                                <b>No results found, try a different search.</b>
+                            </div>
+                        </div>
+
+                        <%doc>
+                        ## OLD STYLE
+                        <div id="searchResults" style="height: 100%;">
+                            <div v-if="searchResults.results === undefined" class="search-status" v-html="searchStatus"></div>
+                            <fieldset v-else>
                                 <legend class="legendStep">Search Results:</legend>
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <td></td>
-                                            <td>Show Name</td>
-                                            <td>Premiere</td>
-                                            <td>Indexer</td>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr v-if="searchResults.results.length === 0">
-                                            <td colspan="4">
-                                                <b>No results found, try a different search.</b>
-                                            </td>
-                                        </tr>
-                                        <tr v-else v-for="result in searchResults.results" @click="whichSeries = [result.indexerId, result.seriesId, result.seriesName].join('|')">
-                                            <td style="text-align: center; vertical-align: middle;">
-                                                ## FIXME: Do we still need this value replace? .replace(/"/g, '')
-                                                <input v-model="whichSeries" type="radio" :value="[result.indexerId, result.seriesId, result.seriesName].join('|')" id="whichSeries" name="whichSeries" />
-                                            </td>
-                                            <td>
-                                                ## For now only add the language id to the tvdb url, as the others might have different routes.
-                                                <app-link v-if="searchResults.language && searchResults.language !== '' && result.indexerId === 1" :href="result.indexerShowUrl + result.seriesId + '&lid=' + searchResults.language">
-                                                    <b>{{ result.seriesName }}</b>
-                                                </app-link>
-                                                <app-link v-else :href="result.indexerShowUrl + result.seriesId">
-                                                    <b>{{ result.seriesName }}</b>
-                                                </app-link>
-                                            </td>
-                                            <td v-if="result.premiereDate !== null">{{ result.premiereDate }} on {{ result.network }}</td>
-                                            <td>{{ result.indexerName || ''}}</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            ## // <END> NEW STYLE
+                                <b v-if="searchResults.results.length === 0">No results found, try a different search.</b>
+                                <div v-else v-for="result in searchResults.results">
+                                    <input v-model="whichSeries" type="radio" :value="result.whichSeries" id="whichSeries" name="whichSeries" style="vertical-align: -2px;" />
+                                    <app-link :href="result.indexerShowUrl">
+                                        <b>{{ result.seriesName }}</b>
+                                    </app-link>
 
-                            ## OLD STYLE - works
-                            <div id="searchResults" style="height: 100%;">
-                                <span v-if="searchRequestText.length !== 0" v-html="searchRequestText"></span>
-                                <fieldset v-else>
-                                    <legend class="legendStep">Search Results:</legend>
-                                    <b v-if="searchResults.results.length === 0">No results found, try a different search.</b>
-                                    <div v-else v-for="result in searchResults.results">
-                                        ## FIXME: Do we still need this value replace? .replace(/"/g, '')
-                                        <input v-model="whichSeries" type="radio" :value="[result.indexerId, result.seriesId, result.seriesName].join('|')" id="whichSeries" name="whichSeries" />
-                                        ## For now only add the language id to the tvdb url, as the others might have different routes.
-                                        <app-link v-if="searchResults.language && searchResults.language !== '' && result.indexerId === 1" :href="result.indexerShowUrl + result.seriesId + '&lid=' + searchResults.language">
-                                            <b>{{ result.seriesName }}</b>
-                                        </app-link>
-                                        <app-link v-else :href="result.indexerShowUrl + result.seriesId">
-                                            <b>{{ result.seriesName }}</b>
-                                        </app-link>
-
-                                        <span v-if="result.premiereDate !== null" v-html="debutText(result)"></span>
-                                        <span v-if="result.indexerName !== null"> [{{result.indexerName}}]</span>
-                                    </div>
-                                </fieldset>
-                            </div>
-                            ## // <END> OLD STYLE
-                        % endif
+                                    <span v-if="result.premiereDate !== null" v-html="debutText(result)"></span>
+                                    <span v-if="result.indexerName !== null"> [{{result.indexerName}}]</span>
+                                </div>
+                            </fieldset>
+                        </div>
+                        </%doc>
                     </div>
                 </fieldset>
                 <fieldset class="sectionwrap">
                     <legend class="legendStep">Pick the parent folder</legend>
-                    <div class="stepDiv">
-                        % if provided_show_dir:
-                            Pre-chosen Destination Folder: <b>{{providedInfo.seriesDir}}</b> <br>
-                            <input type="hidden" id="fullShowPath" name="fullShowPath" :value="providedInfo.seriesDir" /><br>
-                        % else:
-                            <root-dirs @update:root-dirs="rootDirsUpdated"></root-dirs>
-                        % endif
+                    <div v-if="providedInfo.seriesDir" class="stepDiv">
+                        Pre-chosen Destination Folder: <b>{{providedInfo.seriesDir}}</b> <br>
+                        <input type="hidden" id="fullShowPath" name="fullShowPath" :value="providedInfo.seriesDir" /><br>
+                    </div>
+                    <div v-else class="stepDiv">
+                        <root-dirs @update:root-dirs="rootDirsUpdated"></root-dirs>
                     </div>
                 </fieldset>
                 <fieldset class="sectionwrap">
@@ -423,17 +436,15 @@ const startVue = () => {
                         <%include file="/inc_addShowOptions.mako"/>
                     </div>
                 </fieldset>
-                % for curNextDir in other_shows:
-                <input type="hidden" name="other_shows" value="${curNextDir}" />
-                % endfor
+
+                <input v-for="curNextDir in otherShows" type="hidden" name="other_shows" :value="curNextDir" />
+
                 <input type="hidden" name="skipShow" id="skipShow" :value="skipShow" />
             </form>
             <br>
             <div style="width: 100%; text-align: center;">
                 <input @click.prevent="submitForm" id="addShowButton" class="btn-medusa" type="button" value="Add Show" :disabled="addButtonDisabled" />
-                % if provided_show_dir:
-                <input @click.prevent="submitFormSkip" class="btn-medusa" type="button" id="skipShowButton" value="Skip Show" />
-                % endif
+                <input v-if="providedInfo.seriesDir" @click.prevent="submitFormSkip" class="btn-medusa" type="button" id="skipShowButton" value="Skip Show" />
             </div>
         </div>
     </div>
