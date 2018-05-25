@@ -75,7 +75,7 @@ const startVue = () => {
                 sanitizedNameCache: {},
 
                 selectedRootDir: '',
-                whichSeries: ''
+                seriesIdentifier: ''
             };
         },
         mounted() {
@@ -134,12 +134,12 @@ const startVue = () => {
         },
         computed: {
             selectedSeries() {
-                const { searchResults, whichSeries } = this;
-                if (searchResults.length === 0) return null;
-                return searchResults.find(s => s.identifier === whichSeries);
+                const { searchResults, seriesIdentifier } = this;
+                if (searchResults.length === 0 || seriesIdentifier.length === 0) return null;
+                return searchResults.find(s => s.identifier === seriesIdentifier);
             },
             showName() {
-                const { whichSeries, providedInfo, selectedSeries } = this;
+                const { providedInfo, selectedSeries } = this;
                 // If we provided a show, use that
                 if (providedInfo.use && providedInfo.seriesName.length !== 0) return providedInfo.seriesName;
                 // If they've picked a radio button then use that
@@ -148,9 +148,9 @@ const startVue = () => {
                 return '';
             },
             addButtonDisabled() {
-                const { whichSeries, selectedRootDir, providedInfo } = this;
+                const { seriesIdentifier, selectedRootDir, providedInfo } = this;
                 if (providedInfo.use) return providedInfo.seriesDir.length === 0 || providedInfo.seriesId === 0;
-                return selectedRootDir.length === 0 || whichSeries === '';
+                return selectedRootDir.length === 0 || seriesIdentifier === '';
             },
             spinnerSrc() {
                 const themeSpinner = MEDUSA.config.themeSpinner;
@@ -231,7 +231,7 @@ const startVue = () => {
                     this.searchRequest.abort();
                 }
 
-                this.whichSeries = '';
+                this.seriesIdentifier = '';
                 this.searchResults = [];
 
                 // Get the language name
@@ -264,7 +264,7 @@ const startVue = () => {
                 this.searchResults = data.results
                     .map(result => {
                         // Compute whichSeries value
-                        // whichSeries = result.join('|')
+                        whichSeries = result.join('|')
 
                         // Unpack result items 0 through 6 (Array)
                         let [ indexerName, indexerId, indexerShowUrl, seriesId, seriesName, premiereDate, network ] = result;
@@ -287,7 +287,7 @@ const startVue = () => {
 
                         return {
                             identifier,
-                            // whichSeries,
+                            whichSeries,
                             indexerName,
                             indexerId,
                             indexerShowUrl,
@@ -301,7 +301,7 @@ const startVue = () => {
 
                 if (this.searchResults.length !== 0) {
                     // Select the first result
-                    this.whichSeries = this.searchResults[0].identifier;
+                    this.seriesIdentifier = this.searchResults[0].identifier;
                 }
 
                 this.firstSearch = true;
@@ -382,7 +382,8 @@ const startVue = () => {
                             <table v-if="searchResults.length !== 0" class="search-results">
                                 <thead>
                                     <tr>
-                                        <th></th>
+                                        ## @FIXME: Remove the need for the whichSeries value
+                                        <th><input v-if="selectedSeries !== null" type="hidden" name="whichSeries" :value="selectedSeries.whichSeries" /></th>
                                         <th>Show Name</th>
                                         <th class="premiere">Premiere</th>
                                         <th class="network">Network</th>
@@ -390,9 +391,9 @@ const startVue = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="result in searchResults" @click="whichSeries = result.identifier" :class="{ selected: whichSeries === result.identifier }">
+                                    <tr v-for="result in searchResults" @click="seriesIdentifier = result.identifier" :class="{ selected: seriesIdentifier === result.identifier }">
                                         <td style="text-align: center; vertical-align: middle;">
-                                            <input v-model="whichSeries" type="radio" :value="result.identifier" name="whichSeries" />
+                                            <input v-model="seriesIdentifier" type="radio" :value="result.identifier" />
                                         </td>
                                         <td>
                                             <app-link :href="result.indexerShowUrl" title="Go to the show's page on the indexer site">
